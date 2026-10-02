@@ -243,7 +243,7 @@ fm_harness_ancestry_pids() {
   _fm_proc_table_reset
   pid=$(fm_proc_self_pid)
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-    fm_proc_lookup "$pid" ppid || break
+    fm_proc_lookup "$pid" ppid || { [ "$?" -ne 2 ] || return 2; break; }
     if fm_harness_process_matches "$FM_PROC_COMM" "$FM_PROC_ARGS"; then
       printf '%s\n' "$pid"
       printed=1
@@ -328,21 +328,22 @@ fm_harness_pid_may_be_alive() {  # <pid>
 # non-goal. Two genuinely different live sessions sharing one id is not a
 # supported state (Claude refuses to resume a running session under its id).
 
-# Print the Claude session id this process may own with, or return 1. $1 is the
-# ancestry list an earlier walk already produced, so a caller that walked once
-# need not walk again.
+# Print the Claude session id this process may own with, or return 1. Returns 2
+# when the process table cannot be read, so trust is undecided rather than
+# absent. $1 is the ancestry list an earlier walk already produced, so a caller
+# that walked once need not walk again.
 fm_session_lock_trusted_session_id() {  # [<ancestry-pids>]
   local id=${CLAUDE_CODE_SESSION_ID:-} claude_pid=${CLAUDE_PID:-} pids=${1:-} pid
   [ -n "$id" ] || return 1
   case "$id" in *$'\n'*|*$'\r'*) return 1 ;; esac
   case "$claude_pid" in ''|*[!0-9]*) return 1 ;; esac
   if [ -z "$pids" ]; then
-    pids=$(fm_harness_ancestry_pids) || return 1
+    pids=$(fm_harness_ancestry_pids) || return
   fi
   _fm_proc_table_reset
   while IFS= read -r pid; do
     [ "$pid" = "$claude_pid" ] || continue
-    fm_proc_lookup "$pid" || return 1
+    fm_proc_lookup "$pid" || return
     fm_harness_process_matches "$FM_PROC_COMM" "$FM_PROC_ARGS" || return 1
     [ "$FM_HARNESS_IS_CLAUDE" -eq 1 ] || return 1
     printf '%s\n' "$id"
@@ -385,9 +386,11 @@ fm_session_lock_same_session() {  # <state> [<ancestry-pids>]
 # the sidecar still names that session. Every other session records the
 # outermost pid of its contiguous run, exactly as before.
 fm_session_lock_anchor_pid() {
-  local pids
+  local pids rc=0
   pids=$(fm_harness_ancestry_pids) || return 1
-  if fm_session_lock_trusted_session_id "$pids" >/dev/null; then
+  fm_session_lock_trusted_session_id "$pids" >/dev/null || rc=$?
+  [ "$rc" -ne 2 ] || return 1
+  if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$CLAUDE_PID"
     return 0
   fi

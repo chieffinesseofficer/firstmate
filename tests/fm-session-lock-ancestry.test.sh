@@ -216,7 +216,7 @@ row 700 600 'C:\Users\u\scoop\apps\pwsh\current\pwsh.exe' 'pwsh.exe -NoExit'
 row 640 600 'C:\Users\u\bin\pi.exe' 'pi.exe'
 SH
   chmod +x "$fakebin/powershell.exe"
-  run_lock() {  # <snapshots-ok> <recorded-pid>
+  run_lock() {  # <snapshots-ok> <recorded-pid> [fm-lock-arg]
     printf '%s\n' "$2" > "$dir/state/.lock"
     rm -f "$dir/state/.lock-session" "$dir/count"
     env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID FM_PROC_PLATFORM=windows \
@@ -225,8 +225,8 @@ SH
         . "$0/bin/fm-session-lock-lib.sh"
         FM_TEST_SELF=$(fm_proc_self_pid)
         export FM_TEST_SELF
-        exec "$0/bin/fm-lock.sh"
-      ' "$ROOT"
+        exec "$0/bin/fm-lock.sh" "$@"
+      ' "$ROOT" "${@:3}"
   }
 
   if out=$(run_lock 1 640 2>&1); then
@@ -239,6 +239,22 @@ SH
     > "$dir/inspect.out"
   [ "$(cat "$dir/inspect.out")" = "unknown unknown" ] \
     || fail "an unreadable process table classified the lock as '$(cat "$dir/inspect.out")', expected unknown"
+  out=$(run_lock 0 640 status 2>&1)
+  [ "$out" = "lock: unknown (pid 640)" ] \
+    || fail "an unreadable process table printed lock status '$out', expected unknown"
+
+  # A trusted Claude session whose trust check cannot read the table must not
+  # fall back to the outermost pid of its run as the lock anchor.
+  if out=$(FM_TEST_SNAPSHOT_COUNT="$dir/count.anchor" FM_TEST_SNAPSHOTS_OK=1 FM_TEST_PROC_PLATFORM=windows \
+    FM_TEST_SESSION_ID=S1 FM_TEST_CLAUDE_PID=800 \
+    lib_eval "$fakebin" 'FM_TEST_SELF=$(fm_proc_self_pid); export FM_TEST_SELF; fm_session_lock_anchor_pid' 2>&1); then
+    fail "an unreadable trust check still resolved lock anchor '$out'"
+  fi
+  out=$(FM_TEST_SNAPSHOT_COUNT="$dir/count.anchor-ok" FM_TEST_SNAPSHOTS_OK=99 FM_TEST_PROC_PLATFORM=windows \
+    FM_TEST_SESSION_ID=S1 FM_TEST_CLAUDE_PID=800 \
+    lib_eval "$fakebin" 'FM_TEST_SELF=$(fm_proc_self_pid); export FM_TEST_SELF; fm_session_lock_anchor_pid') \
+    || fail "a readable trust check resolved no lock anchor"
+  [ "$out" = 800 ] || fail "the trusted Windows anchor resolved '$out', expected CLAUDE_PID 800"
 
   # Non-vacuity: with every snapshot readable the same fixture reclaims a dead
   # owner, so the refusal above came from the unreadable table alone.
