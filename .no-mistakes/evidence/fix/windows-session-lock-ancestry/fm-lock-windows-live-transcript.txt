@@ -1,0 +1,56 @@
+## host: MINGW64_NT-10.0-26200 CLAUDE_PID=19940
+## S1 acquire in fresh lab home
+lock acquired: harness pid 19940
+
+real	0m6.836s
+user	0m1.052s
+sys	0m3.532s
+rc=0
+state/.lock:
+19940
+total 10
+drwxr-xr-x 1 SCALPC1 197609  0 Oct  2 12:08 .
+drwxr-xr-x 1 SCALPC1 197609  0 Oct  2 12:08 ..
+-rw-r--r-- 1 SCALPC1 197609  6 Oct  2 12:08 .lock
+-rw-r--r-- 1 SCALPC1 197609 37 Oct  2 12:08 .lock-session
+## S2 re-acquire
+lock acquired: harness pid 19940
+rc=0
+19940
+## S3 status
+lock: held by live harness pid 19940
+## S4 foreign live claude.exe owner (pid 75220, another real Claude session)
+error: another live firstmate session holds the lock (pid 75220); operate read-only until resolved
+rc=1
+lock line1: 75220
+lock: held by live harness pid 75220
+## S5 dead owner pid reclaimed
+lock: stale (pid 999999 dead or not a harness)
+lock acquired: harness pid 19940
+rc=0
+lock line1: 19940
+## S6 live foreign owner + failing powershell.exe (snapshot unavailable)
+error: cannot locate harness process in ancestry
+rc=1
+lock line1: 75220
+lock: unknown (pid 75220)
+## S6b own lock + failing powershell.exe
+error: cannot locate harness process in ancestry
+rc=1
+lock line1: 19940
+## S0 baseline (base commit 87fa81b) acquire in fresh lab home, 60s cap
+error: cannot locate harness process in ancestry
+rc=1 (124=timed out)
+total 8
+drwxr-xr-x 1 SCALPC1 197609 0 Oct  2 12:09 .
+drwxr-xr-x 1 SCALPC1 197609 0 Oct  2 12:08 ..
+## S7 claim lock primitive: fixed fm_lock_try_create makes a real symlink
+try_create_rc=0
+is symlink: yes
+lrwxrwxrwx 1 SCALPC1 197609 47 Oct  2 12:09 /tmp/fm-lab.xTiQE7/state/claimtest -> /tmp/fm-lab.xTiQE7/state/claimtest.owner.YhAD4I
+base_try_create_rc=1
+base is symlink: NO (copy/regular file)
+total 5
+drwxr-xr-x 1 SCALPC1 197609 0 Oct  2 12:09 .
+drwxr-xr-x 1 SCALPC1 197609 0 Oct  2 12:09 ..
+-rw-r--r-- 1 SCALPC1 197609 5 Oct  2 12:09 pid

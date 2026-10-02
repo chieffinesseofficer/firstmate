@@ -1,0 +1,17 @@
+== HEAD unit test (Git Bash host) ==
+ok - session-lock: a version-named Claude Code session is identified from its install path and argv[0]
+ok - session-lock: a harness that is pid 1 of its own namespace is examined, not skipped
+ok - session-lock: on native Windows the harness is found through the Windows process table
+ok - session-lock: an unreadable Windows process table never reclaims a live lock
+ok - session-lock: ordinary script paths under a harness directory are not harness processes
+ok - session-lock: ownership stops at the first non-harness gap above the contiguous run
+ok - session-lock: a live version-named session holding the lock is not mistaken for a stale owner
+not ok - a symlinked sidecar was trusted
+
+== base 87fa81b unit test (same host) ==
+ok - session-lock: a version-named Claude Code session is identified from its install path and argv[0]
+ok - session-lock: a harness that is pid 1 of its own namespace is examined, not skipped
+ok - session-lock: ordinary script paths under a harness directory are not harness processes
+ok - session-lock: ownership stops at the first non-harness gap above the contiguous run
+ok - session-lock: a live version-named session holding the lock is not mistaken for a stale owner
+not ok - a symlinked sidecar was trusted
