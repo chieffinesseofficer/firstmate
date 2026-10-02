@@ -113,7 +113,8 @@ fm_proc_self_pid() {
 
 # Describe pid $1 in FM_PROC_COMM (`ps -o comm=`) and FM_PROC_ARGS
 # (`ps -o args=`), plus FM_PROC_PPID (`ps -o ppid=`, spaces removed) when $2 is
-# "ppid". Returns 1 when the process cannot be described. On Windows the command
+# "ppid". Returns 1 when the process cannot be described, and 2 on Windows when
+# the process table itself cannot be read. On Windows the command
 # name is the executable path with forward slashes and no .exe suffix, and the
 # argument string uses forward slashes too, so the name rules above (basename,
 # exact path components, anchored names) apply unchanged.
@@ -132,7 +133,7 @@ fm_proc_lookup() {  # <pid> [ppid]
     return 0
   fi
   case "$pid" in '' | *[!0-9]*) return 1 ;; esac
-  _fm_proc_table_load || return 1
+  _fm_proc_table_load || return 2
   [ -n "${_FM_PROC_ROWS[$pid]+set}" ] || return 1
   row=${_FM_PROC_ROWS[$pid]}
   IFS=$'\t' read -r FM_PROC_PPID FM_PROC_COMM FM_PROC_ARGS <<EOF
@@ -144,14 +145,15 @@ EOF
   return 0
 }
 
-# True if pid $1 is a live process (`kill -0`).
+# True if pid $1 is a live process (`kill -0`). Returns 2 on Windows when the
+# process table cannot be read, which is never evidence that the pid is gone.
 fm_proc_alive() {  # <pid>
   if [ "$_FM_PROC_WINDOWS" -eq 0 ]; then
-    kill -0 "$1" 2>/dev/null
-    return
+    kill -0 "$1" 2>/dev/null || return 1
+    return 0
   fi
   case "$1" in '' | *[!0-9]*) return 1 ;; esac
-  _fm_proc_table_load || return 1
+  _fm_proc_table_load || return 2
   [ -n "${_FM_PROC_ROWS[$1]+set}" ]
 }
 
@@ -284,13 +286,23 @@ EOF
   printf '%s\n' "$outermost"
 }
 
-# True if $1 is a live process that looks like a verified harness.
+# True if $1 is a live process that looks like a verified harness. Returns 2
+# when the process table cannot be read, so the answer is unknown.
 fm_harness_pid_alive() {
   local pid=$1
   _fm_proc_table_reset
-  fm_proc_alive "$pid" || return 1
-  fm_proc_lookup "$pid" || return 1
+  fm_proc_alive "$pid" || return
+  fm_proc_lookup "$pid" || return
   fm_harness_process_matches "$FM_PROC_COMM" "$FM_PROC_ARGS"
+}
+
+# True unless $1 is provably not a live verified harness. Every path that would
+# take over or recover a recorded owner asks this, so an unreadable process
+# table leaves the lock alone instead of reading as a dead owner.
+fm_harness_pid_may_be_alive() {  # <pid>
+  local rc=0
+  fm_harness_pid_alive "$1" || rc=$?
+  [ "$rc" -ne 1 ]
 }
 
 # --- trusted same-session identity -------------------------------------------
@@ -457,7 +469,7 @@ FM_LOCK_INSPECT_STATE=unknown
 FM_LOCK_INSPECT_PID=
 FM_LOCK_INSPECT_LIVE_HARNESS=unknown
 fm_session_lock_inspect() {  # <state>
-  local state=$1 lock pid
+  local state=$1 lock pid alive=0
   # shellcheck disable=SC2034 # Output globals, read by lock status and inbox ready.
   FM_LOCK_INSPECT_STATE=unknown
   # shellcheck disable=SC2034 # Output globals, read by lock status and inbox ready.
@@ -488,8 +500,10 @@ fm_session_lock_inspect() {  # <state>
       ;;
   esac
   _fm_proc_table_reset
-  if fm_proc_alive "$pid"; then
-    if fm_harness_pid_alive "$pid"; then
+  fm_proc_alive "$pid" || alive=$?
+  [ "$alive" -ne 2 ] || return 0
+  if [ "$alive" -eq 0 ]; then
+    if fm_proc_lookup "$pid" && fm_harness_process_matches "$FM_PROC_COMM" "$FM_PROC_ARGS"; then
       FM_LOCK_INSPECT_STATE=held
       FM_LOCK_INSPECT_LIVE_HARNESS=true
     else
