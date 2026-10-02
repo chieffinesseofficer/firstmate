@@ -45,7 +45,7 @@ lib_eval() {  # <fakebin> <expression>
   [ -z "${FM_TEST_SESSION_ID:-}" ] || session_env+=("CLAUDE_CODE_SESSION_ID=$FM_TEST_SESSION_ID")
   [ -z "${FM_TEST_CLAUDE_PID:-}" ] || session_env+=("CLAUDE_PID=$FM_TEST_CLAUDE_PID")
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID ${session_env[@]+"${session_env[@]}"} \
-    PATH="$fakebin:$PATH" bash -c "
+    FM_PROC_PLATFORM="${FM_TEST_PROC_PLATFORM:-posix}" PATH="$fakebin:$PATH" bash -c "
     . \"\$0\"
     kill() { return \${FM_TEST_KILL_RC:-0}; }
     $expr
@@ -138,6 +138,60 @@ SH
   lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
     || fail "the session holding the lock at namespace pid 1 did not recognize itself as the owner"
   pass "session-lock: a harness that is pid 1 of its own namespace is examined, not skipped"
+}
+
+# On native Windows the harness is a native process that MSYS ps cannot see, so
+# the library reads the Windows process table (one PowerShell snapshot) instead.
+# The fake powershell.exe stands in for that snapshot: the shell running the
+# expression sits under a Git Bash launcher, under claude.exe, under herdr's
+# pwsh. FM_TEST_SELF is the pid the walk starts from, read from the library
+# itself so the table matches on any host.
+test_windows_process_table_finds_the_native_harness() {
+  local dir fakebin got
+  dir="$TMP_ROOT/windows-table"
+  fakebin=$(fm_fakebin "$dir")
+  mkdir -p "$dir/state"
+  cat > "$fakebin/powershell.exe" <<'SH'
+#!/usr/bin/env bash
+row() { printf '%s\t%s\t%s\t%s\r\n' "$@"; }
+row "$FM_TEST_SELF" 900 'C:\Program Files\Git\usr\bin\bash.exe' '"C:\Program Files\Git\usr\bin\bash.exe" -c fm-lock'
+row 900 800 'C:\Program Files\Git\bin\bash.exe' '"C:\Program Files\Git\bin\bash.exe" -c -l "export CLAUDE_X=1"'
+row 800 "${FM_TEST_CLAUDE_PARENT:-700}" "${FM_TEST_CLAUDE_EXE:-C:\\Users\\u\\.local\\bin\\claude.exe}" '"C:\Users\u\.local\bin\claude.exe"'
+row 700 600 'C:\Users\u\scoop\apps\pwsh\current\pwsh.exe' 'pwsh.exe -NoExit'
+row 650 600 'C:\Users\u\.claude\hooks\notify.exe' 'notify.exe'
+row 640 600 'C:\Users\u\bin\pi.exe' 'pi.exe'
+row 4 0 'System' ''
+SH
+  chmod +x "$fakebin/powershell.exe"
+  win_eval() {  # <expression>
+    FM_TEST_PROC_PLATFORM=windows lib_eval "$fakebin" "FM_TEST_SELF=\$(fm_proc_self_pid); export FM_TEST_SELF; $1"
+  }
+
+  got=$(win_eval 'fm_harness_ancestry_pids') \
+    || fail "the native claude.exe ancestor was not found through the Windows process table"
+  [ "$got" = 800 ] || fail "the Windows ancestry resolved '$got', expected claude.exe pid 800"
+
+  # Non-vacuity: the same table with an ordinary executable in claude's place
+  # must find nothing, so the walk is not matching everything it reaches.
+  if FM_TEST_CLAUDE_EXE='C:\Windows\explorer.exe' win_eval 'fm_harness_ancestry_pids' >/dev/null 2>&1; then
+    fail "an ordinary native executable was read as a harness process"
+  fi
+
+  win_eval 'fm_harness_pid_alive 800' || fail "the live native claude.exe was not a live harness"
+  win_eval 'fm_harness_pid_alive 640' || fail "an anchored harness name with a .exe suffix (pi.exe) was not recognized"
+  if win_eval 'fm_harness_pid_alive 650'; then
+    fail "a hook executable under a .claude directory was read as a harness"
+  fi
+  if win_eval 'fm_harness_pid_alive 4242'; then
+    fail "a pid absent from the Windows process table was reported alive"
+  fi
+  got=$(FM_TEST_SESSION_ID=S1 FM_TEST_CLAUDE_PID=800 win_eval 'fm_session_lock_anchor_pid') \
+    || fail "no anchor pid resolved for a trusted Windows Claude session"
+  [ "$got" = 800 ] || fail "the trusted Windows anchor resolved '$got', expected CLAUDE_PID 800"
+  printf '800\n' > "$dir/state/.lock"
+  win_eval "fm_session_lock_owned_by_self '$dir/state'" \
+    || fail "the Windows session holding the lock as claude.exe pid 800 did not recognize itself as the owner"
+  pass "session-lock: on native Windows the harness is found through the Windows process table"
 }
 
 test_ordinary_paths_are_never_harness_processes() {
@@ -1101,6 +1155,7 @@ test_verified_reclaim_keeps_new_sidecar() {
 
 test_version_named_session_is_identified_on_both_platforms
 test_harness_at_namespace_pid1_is_examined
+test_windows_process_table_finds_the_native_harness
 test_ordinary_paths_are_never_harness_processes
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
